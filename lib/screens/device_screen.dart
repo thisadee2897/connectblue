@@ -1,15 +1,8 @@
-// ignore_for_file: avoid_print
-
+// ignore_for_file: avoid_print, prefer_const_constructors
 import 'dart:async';
 import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
-
-import '../widgets/service_tile.dart';
-import '../widgets/characteristic_tile.dart';
-import '../widgets/descriptor_tile.dart';
-import '../utils/snackbar.dart';
 import '../utils/extra.dart';
 
 class DeviceScreen extends StatefulWidget {
@@ -23,24 +16,25 @@ class DeviceScreen extends StatefulWidget {
 
 class _DeviceScreenState extends State<DeviceScreen> {
   int? _rssi;
-  int? _mtuSize;
   BluetoothConnectionState _connectionState =
       BluetoothConnectionState.disconnected;
   List<BluetoothService> _services = [];
   bool _isDiscoveringServices = false;
-  bool _isConnecting = false;
-  bool _isDisconnecting = false;
+  double? _weight;
+  double? _lastWeight;
+  Timer? _timer;
+  Color backgroundColor = Colors.black;
+  Color textColor = Colors.white;
 
   late StreamSubscription<BluetoothConnectionState>
       _connectionStateSubscription;
   late StreamSubscription<bool> _isConnectingSubscription;
   late StreamSubscription<bool> _isDisconnectingSubscription;
   late StreamSubscription<int> _mtuSubscription;
-
+  late BluetoothCharacteristic characteristic;
   @override
   void initState() {
     super.initState();
-
     _connectionStateSubscription =
         widget.device.connectionState.listen((state) async {
       _connectionState = state;
@@ -49,29 +43,8 @@ class _DeviceScreenState extends State<DeviceScreen> {
       }
       if (state == BluetoothConnectionState.connected && _rssi == null) {
         _rssi = await widget.device.readRssi();
+        print('_rssi=$_rssi');
       }
-      if (mounted) {
-        setState(() {});
-      }
-    });
-
-    _mtuSubscription = widget.device.mtu.listen((value) {
-      _mtuSize = value;
-      if (mounted) {
-        setState(() {});
-      }
-    });
-
-    _isConnectingSubscription = widget.device.isConnecting.listen((value) {
-      _isConnecting = value;
-      if (mounted) {
-        setState(() {});
-      }
-    });
-
-    _isDisconnectingSubscription =
-        widget.device.isDisconnecting.listen((value) {
-      _isDisconnecting = value;
       if (mounted) {
         setState(() {});
       }
@@ -94,38 +67,32 @@ class _DeviceScreenState extends State<DeviceScreen> {
   Future onConnectPressed() async {
     try {
       await widget.device.connectAndUpdateStream();
-      Snackbar.show(ABC.c, "Connect: Success", success: true);
     } catch (e) {
       if (e is FlutterBluePlusException &&
           e.code == FbpErrorCode.connectionCanceled.index) {
         // ignore connections canceled by the user
-      } else {
-        Snackbar.show(ABC.c, prettyException("Connect Error:", e),
-            success: false);
-      }
+      } else {}
     }
   }
 
   Future onCancelPressed() async {
     try {
       await widget.device.disconnectAndUpdateStream(queue: false);
-      Snackbar.show(ABC.c, "Cancel: Success", success: true);
     } catch (e) {
-      Snackbar.show(ABC.c, prettyException("Cancel Error:", e), success: false);
+      print(e);
     }
   }
 
   Future onDisconnectPressed() async {
     try {
       await widget.device.disconnectAndUpdateStream();
-      Snackbar.show(ABC.c, "Disconnect: Success", success: true);
     } catch (e) {
-      Snackbar.show(ABC.c, prettyException("Disconnect Error:", e),
-          success: false);
+      print(e);
     }
   }
 
   Future onDiscoverServicesPressed() async {
+    //ฟังก์ชั่นเริ่มทำงาน
     if (mounted) {
       setState(() {
         _isDiscoveringServices = true;
@@ -133,20 +100,40 @@ class _DeviceScreenState extends State<DeviceScreen> {
     }
     try {
       _services = await widget.device.discoverServices();
-      print("---------------------------");
       if (_services.isNotEmpty) {
+        characteristic = _services.last.characteristics[0];
         _services.last.characteristics[0].lastValueStream.listen((value) {
           Uint8List dataX = Uint8List(0);
           dataX = Uint8List.fromList([...dataX, ...value]);
           var text = String.fromCharCodes(dataX);
-          print("textweightScale =${text.replaceAll(RegExp(r'[0-9].'), '')}");
+          var currentWeight = double.tryParse(text.trim()) ?? 0.0;
+
+          if (_lastWeight == currentWeight) {
+            _timer?.cancel();
+            _timer = Timer(const Duration(seconds: 1), () {
+              setState(() {
+                textColor = Colors.green;
+                backgroundColor = Colors.white;
+              });
+            });
+          } else {
+            _timer?.cancel();
+            _lastWeight = currentWeight;
+            setState(() {
+              textColor = Colors.white;
+              backgroundColor = Colors.black;
+            });
+          }
+          setState(() {
+            _weight = currentWeight;
+          });
+          print(_lastWeight == currentWeight);
+          print("weight =${text.trim()}");
         });
+        onSubscribePressed();
       }
-      print("---------------------------");
-      Snackbar.show(ABC.c, "Discover Services: Success", success: true);
     } catch (e) {
-      Snackbar.show(ABC.c, prettyException("Discover Services Error:", e),
-          success: false);
+      print(e);
     }
     if (mounted) {
       setState(() {
@@ -158,44 +145,9 @@ class _DeviceScreenState extends State<DeviceScreen> {
   Future onRequestMtuPressed() async {
     try {
       await widget.device.requestMtu(223, predelay: 0);
-      Snackbar.show(ABC.c, "Request Mtu: Success", success: true);
     } catch (e) {
-      Snackbar.show(ABC.c, prettyException("Change Mtu Error:", e),
-          success: false);
+      print(e);
     }
-  }
-
-  List<Widget> _buildServiceTiles(BuildContext context, BluetoothDevice d) {
-    print(
-      _services.map(
-        (s) => ServiceTile(
-          service: s,
-          characteristicTiles: s.characteristics
-              .where((e) => e.characteristicUuid.toString() == 'ffe1')
-              .map((c) => _buildCharacteristicTile(c))
-              .toList(),
-        ),
-      ),
-    );
-    return _services
-        .map(
-          (s) => ServiceTile(
-            service: s,
-            characteristicTiles: s.characteristics
-                .where((e) => e.characteristicUuid.toString() == 'ffe1')
-                .map((c) => _buildCharacteristicTile(c))
-                .toList(),
-          ),
-        )
-        .toList();
-  }
-
-  CharacteristicTile _buildCharacteristicTile(BluetoothCharacteristic c) {
-    return CharacteristicTile(
-      characteristic: c,
-      descriptorTiles:
-          c.descriptors.map((d) => DescriptorTile(descriptor: d)).toList(),
-    );
   }
 
   Widget buildSpinner(BuildContext context) {
@@ -218,19 +170,6 @@ class _DeviceScreenState extends State<DeviceScreen> {
     );
   }
 
-  Widget buildRssiTile(BuildContext context) {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        isConnected
-            ? const Icon(Icons.bluetooth_connected)
-            : const Icon(Icons.bluetooth_disabled),
-        Text(((isConnected && _rssi != null) ? '${_rssi!} dBm' : ''),
-            style: Theme.of(context).textTheme.bodySmall)
-      ],
-    );
-  }
-
   Widget buildGetServices(BuildContext context) {
     return IndexedStack(
       index: (_isDiscoveringServices) ? 1 : 0,
@@ -243,8 +182,10 @@ class _DeviceScreenState extends State<DeviceScreen> {
           icon: SizedBox(
             width: 18.0,
             height: 18.0,
-            child: CircularProgressIndicator(
-              valueColor: AlwaysStoppedAnimation(Colors.grey),
+            child: Center(
+              child: CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation(Colors.grey),
+              ),
             ),
           ),
           onPressed: null,
@@ -253,98 +194,46 @@ class _DeviceScreenState extends State<DeviceScreen> {
     );
   }
 
-  Widget buildMtuTile(BuildContext context) {
-    return ListTile(
-        title: const Text('MTU Size'),
-        subtitle: Text('$_mtuSize bytes'),
-        trailing: IconButton(
-          icon: const Icon(Icons.edit),
-          onPressed: onRequestMtuPressed,
-        ));
-  }
-
-  Widget buildConnectButton(BuildContext context) {
-    return Row(children: [
-      if (_isConnecting || _isDisconnecting) buildSpinner(context),
-      TextButton(
-          onPressed: _isConnecting
-              ? onCancelPressed
-              : (isConnected ? onDisconnectPressed : onConnectPressed),
-          child: Text(
-            _isConnecting ? "CANCEL" : (isConnected ? "DISCONNECT" : "CONNECT"),
-            style: Theme.of(context)
-                .primaryTextTheme
-                .labelLarge
-                ?.copyWith(color: Colors.white),
-          ))
-    ]);
-  }
-
-  Stream<Uint8List> _convertToUint8List(Stream<List<int>> stream) {
-    return stream.map((data) => Uint8List.fromList(data));
+  Future onSubscribePressed() async {
+    try {
+      await characteristic.setNotifyValue(characteristic.isNotifying == false);
+      if (characteristic.properties.read) {
+        await characteristic.read();
+      }
+      if (mounted) {
+        setState(() {});
+      }
+    } catch (e) {
+      print(e);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return ScaffoldMessenger(
-      key: Snackbar.snackBarKeyC,
       child: Scaffold(
         appBar: AppBar(
           title: Text(widget.device.platformName),
-          actions: [buildConnectButton(context)],
         ),
         body: SingleChildScrollView(
           child: Column(
             children: <Widget>[
-              buildRemoteId(context),
-              ListTile(
-                leading: buildRssiTile(context),
-                title: Text(
-                    'Device is ${_connectionState.toString().split('.')[1]}.'),
-                trailing: buildGetServices(context),
+              Container(
+                height: 200,
+                width: double.infinity,
+                color: backgroundColor,
+                child: Center(
+                  child: Text(
+                    "$_weight",
+                    style: TextStyle(color: textColor, fontSize: 60),
+                  ),
+                ),
               ),
-              TextweightScaleWidget(
-                  dataStream: _services.isNotEmpty
-                      ? _convertToUint8List(
-                          _services.last.characteristics[0].lastValueStream)
-                      : const Stream.empty()),
-              // TextweightScaleWidget(dataStream: _services.isNotEmpty ? _services.last.characteristics[0].lastValueStream : Stream.empty()),
-              // buildMtuTile(context),
-              ..._buildServiceTiles(context, widget.device),
+              buildGetServices(context),
             ],
           ),
         ),
       ),
     );
-  }
-}
-
-// สร้าง Widget ใหม่สำหรับแสดง textweightScale
-class TextweightScaleWidget extends StatefulWidget {
-  final Stream<Uint8List> dataStream;
-
-  const TextweightScaleWidget({Key? key, required this.dataStream})
-      : super(key: key);
-
-  @override
-  _TextweightScaleWidgetState createState() => _TextweightScaleWidgetState();
-}
-
-class _TextweightScaleWidgetState extends State<TextweightScaleWidget> {
-  String _textweightScale = '';
-
-  @override
-  void initState() {
-    super.initState();
-    widget.dataStream.listen((value) {
-      setState(() {
-        _textweightScale = String.fromCharCodes(value);
-      });
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(_textweightScale);
   }
 }
